@@ -1,0 +1,11 @@
+{
+    "mysql_config": {
+        "host": "",
+        "user": "",
+        "password": "",
+        "database": ""
+    },
+    "crawler_list": [
+        "https://etherscan.io/tokentxns-nft"
+    ]
+}
