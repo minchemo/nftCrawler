@@ -179,6 +179,7 @@ async function transactionsCrawler(url) {
                     let txn_hash = td.eq(1).find('a').text();
                     let timestamp = td.eq(2).find('span').text();
                     timestamp = Math.round(new Date(timestamp).getTime() / 1000);
+                    timestamp = timestamp + 28800;
 
                     let token_id = parseInt(td.eq(7).find('a').text());
                     let token = td.eq(8).find('a');
