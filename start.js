@@ -33,15 +33,28 @@ async function processTransaction(data) {
     for (const key in grouped) {
         const nft_data = { nft_name: grouped[key][0]['nft_name'], contract_address: key }
 
-        let nft_item_id = await checkNftItemExist(nft_data);
+        let holders = 0;
+        let supplys = 0;
+
+        if (grouped[key].length > 5) { //mint超過10個才更新總數
+            supplys = await getTokenSupplys(key);
+            if (supplys > 1000) { //總數超過1000才抓取 holders
+                holders = await getTokenHolders(key);
+            }
+        }
+
+        let nft_item_id = await checkNftItemExist(nft_data, holders, supplys);
         if (nft_item_id == 0) {
-            nft_item_id = await getNftItemId(nft_data);
+            if (holders != 0) {
+                await updateNftItemHolders(nft_data, holders);
+            }
+            if (supplys != 0) {
+                await updateNftItemSupplys(nft_data, supplys);
+            }
+            nft_item_id = await getNftItemId(nft_data, holders, supplys);
         }
 
         let insert = await insertTransaction(nft_item_id, grouped[key]);
-        // if (insert) {
-        //     console.log(JSON.stringify(nft_data) + ' 已保存!');
-        // }
     }
 
 
@@ -49,15 +62,13 @@ async function processTransaction(data) {
     await deleteOldTransaction(); //清除舊紀錄
     console.log('已清除24小時前 Transactions');
 
-    setTimeout(() => {
-        startFetchTransactions(); //開始下一次
-    }, 5000);
+    startFetchTransactions(); //開始下次
 }
 
 /**
  * 檢查nft_item存在
  */
-async function checkNftItemExist(item) {
+async function checkNftItemExist(item, holders, supplys) {
     return new Promise(function (resolve, reject) {
         var sql = "INSERT IGNORE INTO nft_item (contract_address, name) VALUES ?";
         var values = [
@@ -82,6 +93,31 @@ async function getNftItemId(item) {
         });
     })
 }
+
+/**
+ * 更新 supply
+ */
+async function updateNftItemSupplys(item, supplys) {
+    return new Promise(function (resolve, reject) {
+        connection.query(`UPDATE nft_item SET supplys = ${supplys} WHERE contract_address = '${item.contract_address}'`, function (err) {
+            if (err) throw reject(err);
+            resolve(true);
+        });
+    })
+}
+/**
+ * 更新 holders
+ */
+async function updateNftItemHolders(item, holders) {
+    return new Promise(function (resolve, reject) {
+        connection.query(`UPDATE nft_item SET holders = ${holders} WHERE contract_address = '${item.contract_address}'`, function (err) {
+            if (err) throw reject(err);
+            resolve(true);
+        });
+    })
+}
+
+
 
 /**
  * 寫入txn
@@ -153,7 +189,143 @@ async function transactionsCrawler(url) {
         request({
             url: url,
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36'
+            },
+            method: "GET"
+        }, (error, res, body) => {
+            // 如果有錯誤訊息，或沒有 body(內容)，就 return
+            if (error || !body) {
+                reject(err);
+            }
+
+            const data = [];
+            const $ = cheerio.load(body); // 載入 body
+            const list = $("table tr");
+            for (let i = 1; i < list.length; i++) {
+                const td = list.eq(i).find('td');
+
+                let from = td.eq(4).find('a').text();
+                let tokenId = td.eq(7).find('a').text();
+
+                if (!from.match('Null Address')) { //非鑄造
+                    continue;
+                } else if (parseInt(tokenId) > 50000) { //token數量過多，暫時排除
+                    continue;
+                } else {
+                    let txn_hash = td.eq(1).find('a').text();
+                    let timestamp = td.eq(2).find('span').text();
+                    timestamp = Math.round(new Date(timestamp).getTime() / 1000);
+                    timestamp = timestamp + 28800;
+
+                    let token_id = parseInt(td.eq(7).find('a').text());
+                    let token = td.eq(8).find('a');
+                    let token_contract_address = token.attr('href').split('/')[2];
+                    let long_name = token.find('span').find('font');
+                    let nft_name = '';
+
+                    // NFT名稱處理
+                    if (long_name.length > 0) {
+                        nft_name = token.find('span').attr('title');
+                    } else {
+                        nft_name = token.clone().children().remove().end().text();
+                        nft_name = nft_name.split("(");
+                        nft_name = nft_name[0];
+                        nft_name = nft_name.trim();
+                    }
+
+                    if (nft_name != '') {
+                        data.push({ nft_name, token_contract_address, txn_hash, token_id, timestamp });
+                    }
+                }
+            }
+
+            resolve(data);
+        });
+    })
+};
+
+/**
+ * 爬蟲supply
+ */
+async function getTokenSupplys(contract_address) {
+    return new Promise(function (resolve, reject) {
+        request({
+            url: `https://etherscan.io/token/generic-tokenholder-inventory?m=normal&contractAddress=${contract_address}&a=&pUrl=token`,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36'
+            },
+            method: "GET"
+        }, (error, res, body) => {
+            // 如果有錯誤訊息，或沒有 body(內容)，就 return
+            if (error || !body) {
+                reject(err);
+            }
+
+            const data = [];
+            const $ = cheerio.load(body); // 載入 body
+
+            let supplys = $('div').eq(0).find('p').eq(0).text()
+            let match1 = supplys.match(/(?<=A total of ).*(?= tokens found)/gs);
+
+            if (match1) {
+                supplys = match1[0]
+                supplys = supplys.replace(',', '');
+                supplys = parseInt(supplys);
+            } else {
+                supplys = 0
+            }
+
+            resolve(supplys);
+        });
+    })
+};
+/**
+ * 爬蟲holders
+ */
+async function getTokenHolders(contract_address) {
+    return new Promise(function (resolve, reject) {
+        request({
+            url: `https://etherscan.io/token/generic-tokenholders2?a=${contract_address}`,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36'
+            },
+            method: "GET"
+        }, (error, res, body) => {
+            // 如果有錯誤訊息，或沒有 body(內容)，就 return
+            if (error || !body) {
+                reject(err);
+            }
+
+            const data = [];
+            const $ = cheerio.load(body); // 載入 body
+
+
+            let holders = $('#maintable').eq(0).find('#spinwheel').parent().text();
+            let match1 = holders.match(/(?<=From a total of ).*(?= holder)/gs);
+            let match2 = holders.match(/(?<=A total of ).*(?= token holder)/gs);
+
+            if (match1) {
+                holders = match1[0]
+            } else {
+                holders = match2[0]
+            }
+            holders = holders.replace(',', '');
+            holders = parseInt(holders);
+
+            resolve(holders);
+        });
+    })
+};
+
+/**
+ * 爬蟲程序 core
+ */
+async function transactionsCrawler(url) {
+    return new Promise(function (resolve, reject) {
+        request({
+            url: url,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36'
             },
             method: "GET"
         }, (error, res, body) => {
