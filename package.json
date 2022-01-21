@@ -15,6 +15,7 @@
     "decode-html": "^2.0.0",
     "lodash": "^4.17.21",
     "mysql": "^2.18.1",
+    "node-fetch": "2",
     "request": "^2.88.2"
   }
 }

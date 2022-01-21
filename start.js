@@ -1,12 +1,11 @@
 var request = require("request");
 var cheerio = require("cheerio");
 var mysql = require('mysql');
+var fetch = require('node-fetch');
 var _ = require('lodash');
 var { mysql_config, crawler_list } = require('./config.json');
 var htmlDecode = require('decode-html');
-const sdk = require('api')('@opensea/v1.0#1felivgkyk6vyw2'); // OS sdk
 const OPENSEA_APIKEY = 'e5f9d19ffd714d2cacd4bed8bb58b890';
-
 
 /**
  * 連接資料庫
@@ -63,7 +62,6 @@ async function processTransaction(data) {
             await updateNftInfo(opensea_info.collection, nft_data);
             console.log('已更新 Collection 資料...');
         }
-
 
         // let insert = await insertTransaction(nft_item_id, grouped[key]);
     }
@@ -132,7 +130,7 @@ async function updateNftItemHolders(item, holders) {
  */
 async function updateNftInfo(info, nft_data) {
     return new Promise(function (resolve, reject) {
-        const time = Math.round(new Date(info.created_date).getTime()/1000);
+        const time = Math.round(new Date(info.created_date).getTime() / 1000);
         connection.query(`UPDATE nft_item SET 
         name = '${info.name}', 
         description = '${mysql_real_escape_string(info.description)}', 
@@ -144,7 +142,7 @@ async function updateNftInfo(info, nft_data) {
         twitter = '${info.twitter_username}',
         opensea_slug = '${info.slug}',
         create_timestamp = '${time + 28800}'
-        WHERE contract_address = '${nft_data.contract_address}'`, function (err, rows, fields) {;
+        WHERE contract_address = '${nft_data.contract_address}'`, function (err, rows, fields) {
             if (err) reject(err);
             resolve(true);
         });
@@ -156,8 +154,14 @@ async function updateNftInfo(info, nft_data) {
  */
 async function getOpenseaInfo(item) {
     return new Promise(function (resolve, reject) {
-        sdk['retrieving-a-single-contract']({ asset_contract_address: item.contract_address, 'X-API-KEY': OPENSEA_APIKEY })
-            .then(res => resolve(res))
+
+        const options = {
+            method: 'GET', headers: { 'X-API-KEY': OPENSEA_APIKEY }
+        };
+
+        fetch(`https://api.opensea.io/api/v1/asset_contract/${item.contract_address}`, options)
+            .then(response => response.json())
+            .then(response => resolve(response))
             .catch(err => reject(err));
     });
 }
@@ -423,7 +427,7 @@ async function transactionsCrawler(url) {
     })
 };
 
-function mysql_real_escape_string (str) {
+function mysql_real_escape_string(str) {
     if (!str) return ''
     return str.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, function (char) {
         switch (char) {
@@ -443,8 +447,8 @@ function mysql_real_escape_string (str) {
             case "'":
             case "\\":
             case "%":
-                return "\\"+char; // prepends a backslash to backslash, percent,
-                                  // and double/single quotes
+                return "\\" + char; // prepends a backslash to backslash, percent,
+            // and double/single quotes
             default:
                 return char;
         }
