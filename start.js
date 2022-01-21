@@ -130,10 +130,10 @@ async function updateNftItemHolders(item, holders) {
  */
 async function updateNftInfo(info, nft_data) {
     return new Promise(function (resolve, reject) {
-        let time = 0;
-        if (info.hasOwnProperty('created_date')) {
-            time = Math.round(new Date(info.created_date).getTime() / 1000);
+        if (!info) {
+            resolve(true)
         }
+        let time = Math.round(new Date(info.created_date).getTime() / 1000);
         connection.query(`UPDATE nft_item SET 
         name = '${info.name}', 
         description = '${mysql_real_escape_string(info.description)}', 
