@@ -38,32 +38,42 @@ async function processTransaction(data) {
         let holders = 0;
         let supplys = 0;
 
-        // if (grouped[key].length > 5) { //mint超過10個才更新總數
-        //     supplys = await getTokenSupplys(key);
-        //     if (supplys > 1000) { //總數超過1000才抓取 holders
-        //         holders = await getTokenHolders(key);
-        //     }
-        // }
-
-        // let nft_item_id = await checkNftItemExist(nft_data, holders, supplys);
-        // if (nft_item_id == 0) {
-        //     if (holders != 0) {
-        //         await updateNftItemHolders(nft_data, holders);
-        //     }
-        //     if (supplys != 0) {
-        //         await updateNftItemSupplys(nft_data, supplys);
-        //     }
-        //     nft_item_id = await getNftItemId(nft_data, holders, supplys);
-        // }
-
-        let opensea_info = await getOpenseaInfo(nft_data);
-
-        if (opensea_info.hasOwnProperty('collection')) {
-            await updateNftInfo(opensea_info.collection, nft_data);
-            console.log('已更新 Collection 資料...');
+        if (grouped[key].length > 5) { //mint超過10個才更新總數
+            supplys = await getTokenSupplys(key);
+            if (supplys > 1000) { //總數超過1000才抓取 holders
+                holders = await getTokenHolders(key);
+            }
         }
 
-        // let insert = await insertTransaction(nft_item_id, grouped[key]);
+        let has_os_data = false;
+
+        let nft_item_id = await checkNftItemExist(nft_data, holders, supplys);
+        if (nft_item_id == 0) {
+            if (holders != 0) {
+                await updateNftItemHolders(nft_data, holders);
+            }
+            if (supplys != 0) {
+                await updateNftItemSupplys(nft_data, supplys);
+            }
+            const oldNftItemId = await getNftItemId(nft_data, holders, supplys);
+            nft_item_id = oldNftItemId.id
+
+            if (oldNftItemId.os_slug != null) {
+                has_os_data = true;
+            }
+
+            if (!has_os_data) {
+                let opensea_info = await getOpenseaInfo(nft_data);
+
+                if (opensea_info.hasOwnProperty('collection')) {
+                    await updateNftInfo(opensea_info.collection, nft_data);
+                    console.log('已更新 Collection 資料...');
+                }
+            }
+        }
+
+
+        let insert = await insertTransaction(nft_item_id, grouped[key]);
     }
 
 
@@ -96,9 +106,12 @@ async function checkNftItemExist(item, holders, supplys) {
 
 async function getNftItemId(item) {
     return new Promise(function (resolve, reject) {
-        connection.query(`SELECT id FROM nft_item WHERE contract_address = '${item.contract_address}' LIMIT 1`, function (err, result) {
+        connection.query(`SELECT id, opensea_slug FROM nft_item WHERE contract_address = '${item.contract_address}' LIMIT 1`, function (err, result) {
             if (err) reject(err);
-            resolve(result[0].id);
+            resolve({
+                id: result[0].id,
+                os_slug: result[0].opensea_slug
+            });
         });
     })
 }
