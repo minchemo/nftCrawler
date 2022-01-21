@@ -4,6 +4,9 @@ var mysql = require('mysql');
 var _ = require('lodash');
 var { mysql_config, crawler_list } = require('./config.json');
 var htmlDecode = require('decode-html');
+const sdk = require('api')('@opensea/v1.0#1felivgkyk6vyw2'); // OS sdk
+const OPENSEA_APIKEY = 'e5f9d19ffd714d2cacd4bed8bb58b890';
+
 
 /**
  * 連接資料庫
@@ -16,7 +19,7 @@ const connection = mysql.createConnection({
 });
 
 connection.connect(function (err) {
-    if (err) throw err;
+    if (err) err;
 
     console.log("數據庫連接成功");
     startFetchTransactions(); //開始爬蟲
@@ -36,25 +39,33 @@ async function processTransaction(data) {
         let holders = 0;
         let supplys = 0;
 
-        if (grouped[key].length > 5) { //mint超過10個才更新總數
-            supplys = await getTokenSupplys(key);
-            if (supplys > 1000) { //總數超過1000才抓取 holders
-                holders = await getTokenHolders(key);
-            }
+        // if (grouped[key].length > 5) { //mint超過10個才更新總數
+        //     supplys = await getTokenSupplys(key);
+        //     if (supplys > 1000) { //總數超過1000才抓取 holders
+        //         holders = await getTokenHolders(key);
+        //     }
+        // }
+
+        // let nft_item_id = await checkNftItemExist(nft_data, holders, supplys);
+        // if (nft_item_id == 0) {
+        //     if (holders != 0) {
+        //         await updateNftItemHolders(nft_data, holders);
+        //     }
+        //     if (supplys != 0) {
+        //         await updateNftItemSupplys(nft_data, supplys);
+        //     }
+        //     nft_item_id = await getNftItemId(nft_data, holders, supplys);
+        // }
+
+        let opensea_info = await getOpenseaInfo(nft_data);
+
+        if (opensea_info.hasOwnProperty('collection')) {
+            await updateNftInfo(opensea_info.collection, nft_data);
+            console.log('已更新 Collection 資料...');
         }
 
-        let nft_item_id = await checkNftItemExist(nft_data, holders, supplys);
-        if (nft_item_id == 0) {
-            if (holders != 0) {
-                await updateNftItemHolders(nft_data, holders);
-            }
-            if (supplys != 0) {
-                await updateNftItemSupplys(nft_data, supplys);
-            }
-            nft_item_id = await getNftItemId(nft_data, holders, supplys);
-        }
 
-        let insert = await insertTransaction(nft_item_id, grouped[key]);
+        // let insert = await insertTransaction(nft_item_id, grouped[key]);
     }
 
 
@@ -75,7 +86,7 @@ async function checkNftItemExist(item, holders, supplys) {
             [item.contract_address, htmlDecode(item.nft_name)]
         ];
         connection.query(sql, [values], function (err, result) {
-            if (err) throw reject(err);
+            if (err) reject(err);
             resolve(result.insertId);
         });
     })
@@ -88,7 +99,7 @@ async function checkNftItemExist(item, holders, supplys) {
 async function getNftItemId(item) {
     return new Promise(function (resolve, reject) {
         connection.query(`SELECT id FROM nft_item WHERE contract_address = '${item.contract_address}' LIMIT 1`, function (err, result) {
-            if (err) throw reject(err);
+            if (err) reject(err);
             resolve(result[0].id);
         });
     })
@@ -100,7 +111,7 @@ async function getNftItemId(item) {
 async function updateNftItemSupplys(item, supplys) {
     return new Promise(function (resolve, reject) {
         connection.query(`UPDATE nft_item SET supplys = ${supplys} WHERE contract_address = '${item.contract_address}'`, function (err) {
-            if (err) throw reject(err);
+            if (err) reject(err);
             resolve(true);
         });
     })
@@ -111,13 +122,45 @@ async function updateNftItemSupplys(item, supplys) {
 async function updateNftItemHolders(item, holders) {
     return new Promise(function (resolve, reject) {
         connection.query(`UPDATE nft_item SET holders = ${holders} WHERE contract_address = '${item.contract_address}'`, function (err) {
-            if (err) throw reject(err);
+            if (err) reject(err);
+            resolve(true);
+        });
+    })
+}
+/**
+ * 更新 collection 資料
+ */
+async function updateNftInfo(info, nft_data) {
+    return new Promise(function (resolve, reject) {
+        const time = Math.round(new Date(info.created_date).getTime()/1000);
+        connection.query(`UPDATE nft_item SET 
+        name = '${info.name}', 
+        description = '${mysql_real_escape_string(info.description)}', 
+        image_url = '${info.image_url}',
+        banner_url = '${info.banner_image_url}',
+        official_url = '${info.external_url}',
+        discord_url = '${info.discord_url}',
+        instagram = '${info.instagram_username}',
+        twitter = '${info.twitter_username}',
+        opensea_slug = '${info.slug}',
+        create_timestamp = '${time + 28800}'
+        WHERE contract_address = '${nft_data.contract_address}'`, function (err, rows, fields) {;
+            if (err) reject(err);
             resolve(true);
         });
     })
 }
 
-
+/**
+ * 取得 Opensae collection 資料
+ */
+async function getOpenseaInfo(item) {
+    return new Promise(function (resolve, reject) {
+        sdk['retrieving-a-single-contract']({ asset_contract_address: item.contract_address, 'X-API-KEY': OPENSEA_APIKEY })
+            .then(res => resolve(res))
+            .catch(err => reject(err));
+    });
+}
 
 /**
  * 寫入txn
@@ -379,3 +422,31 @@ async function transactionsCrawler(url) {
         });
     })
 };
+
+function mysql_real_escape_string (str) {
+    if (!str) return ''
+    return str.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, function (char) {
+        switch (char) {
+            case "\0":
+                return "\\0";
+            case "\x08":
+                return "\\b";
+            case "\x09":
+                return "\\t";
+            case "\x1a":
+                return "\\z";
+            case "\n":
+                return "\\n";
+            case "\r":
+                return "\\r";
+            case "\"":
+            case "'":
+            case "\\":
+            case "%":
+                return "\\"+char; // prepends a backslash to backslash, percent,
+                                  // and double/single quotes
+            default:
+                return char;
+        }
+    });
+}
